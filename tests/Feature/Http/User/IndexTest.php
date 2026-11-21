@@ -8,6 +8,7 @@ use App\Enums\UserStatus;
 use App\Models\User;
 use App\Services\UserWithdrawalService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 class IndexTest extends TestCase
@@ -114,6 +115,50 @@ class IndexTest extends TestCase
         $response->assertOk();
         $response->assertSee($renamedEmail);
         $response->assertDontSee('active@example.test');
+    }
+
+    #[DataProvider('withdrawnVisibilityCases')]
+    public function test_withdrawn_users_are_visible_only_with_withdrawn_filter(array $filters, array $expectedStatuses): void
+    {
+        $admin = User::factory()->admin()->create();
+        $students = collect();
+
+        foreach (UserStatus::cases() as $status) {
+            $students->push(User::factory()->student()->create([
+                'name' => '一覧検索対象 '.$status->value,
+                'status' => $status->value,
+            ]));
+        }
+
+        $deletedStudent = User::factory()->student()->create(['name' => '一覧検索対象 退会済']);
+        app(UserWithdrawalService::class)->withdraw($deletedStudent);
+        $students->push($deletedStudent);
+
+        $response = $this->actingAs($admin)->get(route('admin.users.index', array_merge([
+            'role' => 'student',
+        ], $filters)));
+
+        $response->assertOk();
+        $users = $response->viewData('users');
+        $expectedIds = $students
+            ->filter(fn (User $user) => in_array($user->status->value, $expectedStatuses, true))
+            ->pluck('id')->all();
+
+        $this->assertEqualsCanonicalizing($expectedIds, $users->getCollection()->pluck('id')->all());
+        $this->assertSame(count($expectedIds), $users->total());
+    }
+
+    public static function withdrawnVisibilityCases(): iterable
+    {
+        $activeStatuses = [UserStatus::InProgress->value, UserStatus::Invited->value, UserStatus::Graduated->value];
+
+        yield 'no status filter' => [[], $activeStatuses];
+        yield 'empty status filter' => [['status' => ''], $activeStatuses];
+        yield 'keyword without status filter' => [['keyword' => '一覧検索対象'], $activeStatuses];
+
+        foreach (UserStatus::cases() as $status) {
+            yield $status->value => [['status' => $status->value], [$status->value]];
+        }
     }
 
     public function test_paginates_20_per_page(): void
