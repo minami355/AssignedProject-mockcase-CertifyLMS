@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\Feature\Http\Learning;
 
+use App\Enums\CertificationStatus;
 use App\Enums\ContentStatus;
 use App\Enums\EnrollmentStatus;
 use App\Models\Certification;
@@ -14,6 +15,7 @@ use App\Models\Part;
 use App\Models\Section;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Tests\TestCase;
 
 /**
@@ -190,6 +192,43 @@ class BrowseControllerTest extends TestCase
         $this->actingAs($student)
             ->get(route('learning.sections.show', $section))
             ->assertNotFound();
+    }
+
+    #[DataProvider('certificationVisibilityCases')]
+    public function test_material_visibility_follows_certification_status(
+        CertificationStatus $certificationStatus,
+        EnrollmentStatus $enrollmentStatus,
+    ): void {
+        [$student, $certification, $section] = $this->buildSectionFor($enrollmentStatus);
+        $chapter = $section->chapter;
+        $part = $chapter->part;
+        $certification->update(['status' => $certificationStatus->value]);
+
+        $expectedStatus = $certificationStatus === CertificationStatus::Published ? 200 : 404;
+        $this->actingAs($student);
+
+        $this->get(route('learning.parts.show', $part))->assertStatus($expectedStatus);
+        $this->get(route('learning.chapters.show', $chapter))->assertStatus($expectedStatus);
+        $this->get(route('learning.sections.show', $section))->assertStatus($expectedStatus);
+
+        if ($expectedStatus === 404) {
+            $this->assertDatabaseMissing('learning_sessions', [
+                'user_id' => $student->id,
+                'section_id' => $section->id,
+            ]);
+        }
+    }
+
+    public static function certificationVisibilityCases(): iterable
+    {
+        foreach (CertificationStatus::cases() as $certificationStatus) {
+            foreach ([EnrollmentStatus::Learning, EnrollmentStatus::Passed] as $enrollmentStatus) {
+                yield $certificationStatus->value.'-'.$enrollmentStatus->value => [
+                    $certificationStatus,
+                    $enrollmentStatus,
+                ];
+            }
+        }
     }
 
     /**

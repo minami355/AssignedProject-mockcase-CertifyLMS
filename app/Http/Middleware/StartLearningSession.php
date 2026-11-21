@@ -31,7 +31,7 @@ final class StartLearningSession
         $section = $request->route('section');
         $user = $request->user();
 
-        if ($section instanceof Section && $user !== null) {
+        if ($response->isSuccessful() && $section instanceof Section && $user !== null) {
             try {
                 ($this->startSession)($user, $section);
             } catch (\Throwable $exception) {
